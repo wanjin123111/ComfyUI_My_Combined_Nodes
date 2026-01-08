@@ -528,223 +528,6 @@ class StoryboardCounter:
     @classmethod
     def IS_CHANGED(cls, **kwargs): return float("nan")
 
-class SaveTextFile:
-    def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        default_remove = (
-            "same outfit\n"
-            "同样的场景\n"
-            "same color tone\n"
-            "相同色调\n"
-            "character: same as previons\n"
-            "character: same as previous\n"
-            "与前一个相同的场景\n"
-            "必须严格参考图像\n"
-            "strict reference"
-        )
-        return {
-            "required": {
-                "text": ("STRING", {"forceInput": True}),
-                "filename_prefix": ("STRING", {"default": "my_text", "label": "文件名"}),
-                "save_mode": (["create_new", "overwrite", "append"], {"default": "create_new", "label": "保存模式"}),
-                "min_length": ("INT", {"default": 0, "min": 0, "max": 999999, "step": 1, "label": "最小字数限制"}),
-                "remove_terms": ("STRING", {"default": default_remove, "multiline": True, "label": "剔除词(保存前删除)"}),
-            },
-            "optional": {
-                "custom_path": ("STRING", {"default": "", "placeholder": "自定义路径 (留空存至output)"}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("file_path",)
-    FUNCTION = "save_text"
-    OUTPUT_NODE = True
-    CATEGORY = "xzl/utility"
-
-    def save_text(self, text, filename_prefix, save_mode, min_length, remove_terms, custom_path=""):
-        content_to_save = ""
-        if isinstance(text, list):
-            valid_texts = [str(t) for t in text if t is not None]
-            content_to_save = "\n".join(valid_texts)
-        else:
-            content_to_save = str(text)
-
-        terms_to_remove = [t.strip() for t in remove_terms.split('\n') if t.strip()]
-        for term in terms_to_remove:
-            pattern = re.compile(re.escape(term), re.IGNORECASE)
-            content_to_save = pattern.sub("", content_to_save)
-
-        lines = content_to_save.splitlines()
-        clean_lines = [line.strip() for line in lines if line.strip()]
-        content_to_save = "\n".join(clean_lines)
-
-        if len(content_to_save) < min_length: return ("",)
-
-        full_output_folder = custom_path.strip() if custom_path.strip() else self.output_dir
-        if not os.path.exists(full_output_folder):
-            try: os.makedirs(full_output_folder, exist_ok=True)
-            except: return ("",)
-
-        valid_prefix = "".join(c for c in filename_prefix if c.isalnum() or c in (' ', '_', '-')).strip() or "text_output"
-        file_path = ""
-        mode = 'w' 
-        if save_mode == "create_new":
-            counter = 1
-            while True:
-                file_name = f"{valid_prefix}_{counter:05}.txt"
-                file_path = os.path.join(full_output_folder, file_name)
-                if not os.path.exists(file_path): break
-                counter += 1
-        elif save_mode == "append":
-            mode = 'a'
-            file_path = os.path.join(full_output_folder, f"{valid_prefix}.txt")
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                content_to_save = "\n" + content_to_save
-        else: 
-            file_path = os.path.join(full_output_folder, f"{valid_prefix}.txt")
-
-        try:
-            with open(file_path, mode, encoding="utf-8") as f: f.write(content_to_save)
-        except Exception as e: print(f"[SaveText] Error: {e}")
-        return (file_path,)
-
-class CustomPathSave:
-    def __init__(self): self.run_index = 0
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "images": ("IMAGE", ),
-                "output_path": ("STRING", {"default": r"C:\ComfyUI_Output", "multiline": False}),
-                "filename_prefix": ("STRING", {"default": "Image", "label": "默认前缀(无输入时使用)"}),
-                "extension": (["png", "jpg", "webp"], ),
-                "quality": ("INT", {"default": 95, "min": 1, "max": 100, "step": 1}),
-            },
-            "optional": {
-                "filename_input": ("*", {"forceInput": True, "label": "文件名输入(连整数列表)"}), 
-                "manual_index": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "label": "强制索引(Manual Index)"}),
-            },
-            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
-        }
-
-    RETURN_TYPES = ("INT",); RETURN_NAMES = ("run_index",); FUNCTION = "save_images"; OUTPUT_NODE = True; CATEGORY = "xzl/utility"; INPUT_IS_LIST = True
-
-    def save_images(self, images, output_path, filename_prefix, extension, quality, filename_input=None, manual_index=None, prompt=None, extra_pnginfo=None):
-        actual_manual_index = -1
-        if manual_index is not None:
-            if isinstance(manual_index, list):
-                 if len(manual_index) > 0: actual_manual_index = int(manual_index[0])
-            else: actual_manual_index = int(manual_index)
-
-        if actual_manual_index > -1:
-            self.run_index = actual_manual_index
-            current_seq_id = actual_manual_index
-        else:
-            self.run_index += 1
-            current_seq_id = self.run_index
-
-        img_batch = images[0] 
-        path = output_path[0]
-        prefix = filename_prefix[0]
-        ext = extension[0]
-        qual = quality[0]
-        p = prompt[0] if prompt and len(prompt) > 0 else None
-        ep = extra_pnginfo[0] if extra_pnginfo and len(extra_pnginfo) > 0 else None
-
-        if not os.path.exists(path):
-            try: os.makedirs(path, exist_ok=True)
-            except: pass
-
-        results = list()
-        custom_names = []
-        use_custom_names = False
-
-        if filename_input is not None:
-            raw_input = filename_input
-            target_list = []
-            if isinstance(raw_input, list):
-                if len(raw_input) > 0 and isinstance(raw_input[0], list): target_list = raw_input[0]
-                else: target_list = raw_input
-            if len(target_list) > 0:
-                custom_names = [str(x) for x in target_list]
-                use_custom_names = True
-
-        for idx, image in enumerate(img_batch):
-            if torch.isnan(image).any() or image.max() < 0.001: continue
-
-            i = 255. * image.cpu().numpy()
-            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            metadata = None
-            if ext == 'png':
-                metadata = PngInfo()
-                if p is not None: metadata.add_text("prompt", json.dumps(p))
-                if ep is not None:
-                    for x in ep: metadata.add_text(x, json.dumps(ep[x]))
-
-            file_name = ""
-            if use_custom_names:
-                if idx < len(custom_names): file_name = f"{custom_names[idx]}.{ext}"
-                else: file_name = f"{prefix}_{idx}.{ext}"
-            else:
-                counter = 1
-                while True:
-                    file_name = f"{prefix}_{counter}.{ext}"
-                    if not os.path.exists(os.path.join(path, file_name)): break
-                    counter += 1
-
-            full_path = os.path.join(path, file_name)
-            try:
-                if ext == 'png': img.save(full_path, pnginfo=metadata, compress_level=4)
-                elif ext == 'webp': img.save(full_path, quality=qual, lossless=False)
-                else: img.save(full_path, quality=qual, optimize=True)
-                results.append({"filename": file_name, "subfolder": path, "type": "output"})
-            except Exception as e: print(f"[CustomPathSave] Error saving {file_name}: {e}")
-
-        return { "ui": { "images": results }, "result": (current_seq_id,) }
-
-class LoadNewestTextFile:
-    _read_history = set()
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "folder_path": ("STRING", {"default": "", "multiline": False, "placeholder": "C:\\ComfyUI_Output\\Text"}),
-                "manual_index": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "label": "触发器 (Seed)"}),
-            },
-            "optional": {
-                "trigger": ("STRING", {"forceInput": True}),
-                "reset_history": ("BOOLEAN", {"default": False, "label": "强制重置记忆"}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "INT"); RETURN_NAMES = ("text", "filename", "status_code (1=Old/Read)"); FUNCTION = "load_newest"; CATEGORY = "xzl/utility"
-
-    def load_newest(self, folder_path, manual_index, trigger=None, reset_history=False):
-        if reset_history: LoadNewestTextFile._read_history.clear()
-        if not folder_path or not os.path.exists(folder_path): return ("", "", 1)
-
-        try:
-            files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f)) and f.lower().endswith(".txt")]
-        except: return ("", "", 1)
-        if not files: return ("", "", 1)
-
-        try:
-            newest_file = max(files, key=os.path.getmtime)
-            newest_file_abs = os.path.abspath(newest_file)
-            if time.time() - os.path.getmtime(newest_file_abs) > 300: return ("", "", 1)
-        except: return ("", "", 1)
-
-        if newest_file_abs in LoadNewestTextFile._read_history: return ("", "", 1)
-
-        try:
-            with open(newest_file, 'r', encoding='utf-8', errors='ignore') as f: content = f.read()
-            LoadNewestTextFile._read_history.add(newest_file_abs)
-            return (content, os.path.basename(newest_file), 0)
-        except: return ("", "", 1)
-
 class RoleKeywordDetectorPro:
     @classmethod
     def INPUT_TYPES(s):
@@ -773,22 +556,6 @@ class SceneKeywordDetector:
     RETURN_TYPES = ("INT", "STRING"); RETURN_NAMES = ("signal_int", "passthrough_text"); FUNCTION = "detect_scene_in_large_text"; CATEGORY = "xzl/utility"
     def detect_scene_in_large_text(self, text_input, target_keyword):
         return (1 if target_keyword in str(text_input or "") else 0, str(text_input or ""))
-
-class SceneKeywordMapper:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "text_input": ("STRING", {"multiline": True, "default": ""}),
-                "default_index": ("INT", {"default": 0, "min": 0, "max": 99}),
-            },
-        }
-    RETURN_TYPES = ("INT", "STRING"); RETURN_NAMES = ("scene_index", "passthrough_text"); FUNCTION = "map_scene"; CATEGORY = "xzl/utility"
-    def map_scene(self, text_input, default_index):
-        c, r = str(text_input or ""), default_index
-        for i, k in enumerate(["图一场景", "图二场景", "图三场景", "图四场景", "图五场景", "图六场景", "图七场景", "图八场景", "图九场景", "图十场景"]):
-            if k in c: r = i; break
-        return (r, c)
 
 # ==============================================================================
 # 修复的 Smart Image Concatenate 节点
@@ -854,82 +621,6 @@ class SmartImageConcat:
         except RuntimeError:
             return (valid_images[0],)
 
-class LoadImagesFromPathSequential:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "directory_path": ("STRING", {"default": "", "multiline": False, "placeholder": "X:/path/to/your/images"}),
-                "start_index": ("INT", {"default": 0, "min": 0, "step": 1, "display": "number"}),
-                "batch_size": ("INT", {"default": 1, "min": 1, "max": 4096, "step": 1}),
-                "sort_method": (["natural", "alphabetical"],),
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "INT"); RETURN_NAMES = ("image", "mask", "filename_text", "current_index"); FUNCTION = "load_images"; CATEGORY = "xzl/utility"
-
-    def load_images(self, directory_path, start_index, batch_size, sort_method):
-        if not os.path.isdir(directory_path): raise FileNotFoundError(f"Directory not found: {directory_path}")
-        files = [f for f in os.listdir(directory_path) if os.path.splitext(f)[1].lower() in {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'}]
-        if sort_method == "natural": files.sort(key=lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)])
-        else: files.sort()
-        if not files: raise ValueError("No valid images found in directory.")
-
-        images_list, masks_list, filenames = [], [], []
-        for i in range(batch_size):
-            file_name = files[(start_index + i) % len(files)]
-            img = ImageOps.exif_transpose(Image.open(os.path.join(directory_path, file_name)))
-            mask = 1. - torch.from_numpy(np.array(img.getchannel('A')).astype(np.float32)/255.) if 'A' in img.getbands() else torch.zeros((img.height, img.width), dtype=torch.float32)
-            images_list.append(torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32)/255.))
-            masks_list.append(mask)
-            filenames.append(file_name)
-
-        if batch_size > 1: return (torch.stack(images_list), torch.stack(masks_list), ", ".join(filenames), start_index)
-        return (images_list[0].unsqueeze(0), masks_list[0].unsqueeze(0), filenames[0], start_index)
-
-class LoadImageByIndexSmart:
-    def __init__(self): self.cache_key, self.cache_result = None, None
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "folder_path": ("STRING", {"default": "C:\\path\\to\\images", "multiline": False}),
-                "index": ("INT", {"default": 0, "min": 0, "max": 999999, "step": 1, "label": "索引 (Index)"}),
-                "trigger_interval": ("INT", {"default": 1, "min": 1, "max": 9999, "step": 1, "label": "触发间隔 (Interval)"}),
-                "refresh_cache": ("BOOLEAN", {"default": False, "label_on": "Always Read Disk (强制刷盘)", "label_off": "Use Cache (使用缓存)"}),
-            },
-        }
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "INT"); RETURN_NAMES = ("image", "filename", "full_path", "caption_text", "image_count"); FUNCTION = "load_image_smart"; CATEGORY = "xzl/utility"
-    @classmethod
-    def IS_CHANGED(cls, folder_path, index, trigger_interval, refresh_cache): return float("nan") if refresh_cache else float("nan")
-
-    def load_image_smart(self, folder_path, index, trigger_interval, refresh_cache):
-        folder_path = folder_path.strip().strip('"').strip("'")
-        effective_index = index - (index % trigger_interval) if trigger_interval > 1 else index
-        current_key = (folder_path, effective_index)
-        if not refresh_cache and self.cache_result is not None and self.cache_key == current_key: return self.cache_result
-
-        if effective_index == 0:
-            row1 = [[0.0,0.0,0.0], [0.0,1.0,0.0], [0.85,0.25,0.05]]
-            row2 = [[0.85,0.25,0.05], [0.3,0.0,0.0], [0.0,0.0,0.0]]
-            data = F.interpolate(torch.tensor([row1, row2], dtype=torch.float32).unsqueeze(0).permute(0, 3, 1, 2), size=(512, 768), mode='nearest').permute(0, 2, 3, 1)
-            res = (data, "Special_Pattern_00.png", "Internal_Code", "Start/Cover Image", 1)
-            self.cache_key, self.cache_result = current_key, res; return res
-
-        if not os.path.isdir(folder_path): return (torch.zeros((1, 64, 64, 3)), "", "", "", 0)
-        files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tiff'))], key=lambda x: int(re.match(r'^(\d+)', x).group(1)) if re.match(r'^(\d+)', x) else float('inf'))
-        if not files: return (torch.zeros((1, 64, 64, 3)), "", "", "", 0)
-
-        target_filename = files[(effective_index - 1) % len(files)]
-        try:
-            img = ImageOps.exif_transpose(Image.open(os.path.join(folder_path, target_filename)).convert('RGB'))
-            img_tensor = torch.from_numpy(np.array(img).astype(np.float32) / 255.0)[None,]
-            txt_p = os.path.join(folder_path, os.path.splitext(target_filename)[0] + ".txt")
-            cap = open(txt_p, 'r', encoding='utf-8', errors='ignore').read() if os.path.exists(txt_p) else ""
-            res = (img_tensor, target_filename, os.path.join(folder_path, target_filename), cap, len(files))
-            self.cache_key, self.cache_result = current_key, res; return res
-        except: return (torch.zeros((1, 64, 64, 3)), target_filename, "", "", len(files))
-
 class BatchIntegerGenerator:
     @classmethod
     def INPUT_TYPES(s):
@@ -944,34 +635,6 @@ class BatchIntegerGenerator:
     def generate_sequence(self, index, batch_size, start_from):
         ints = [start_from + (index * batch_size) + i for i in range(batch_size)]
         return (ints, f"Index {index}: {ints}")
-
-class ParallelImageHub:
-    _storage = [None] * 10
-    _empty_image = None
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {"reset": ("BOOLEAN", {"default": False})},
-            "optional": {
-                "image_1": ("IMAGE",), "image_2": ("IMAGE",), "image_3": ("IMAGE",),
-                "image_4": ("IMAGE",), "image_5": ("IMAGE",), "image_6": ("IMAGE",),
-                "image_7": ("IMAGE",), "image_8": ("IMAGE",), "image_9": ("IMAGE",),
-                "image_10": ("IMAGE",),
-            }
-        }
-    RETURN_TYPES = tuple(["IMAGE"] * 10); RETURN_NAMES = tuple([f"Output {i}" for i in range(1, 11)]); FUNCTION = "route"; CATEGORY = "Router"
-    @classmethod
-    def IS_CHANGED(s, **kwargs): return float("nan")
-    def route(self, reset, 
-              image_1=None, image_2=None, image_3=None, image_4=None, image_5=None,
-              image_6=None, image_7=None, image_8=None, image_9=None, image_10=None):
-        if ParallelImageHub._empty_image is None: ParallelImageHub._empty_image = torch.zeros((1, 1, 1, 3), dtype=torch.float32)
-        if reset: ParallelImageHub._storage = [None] * 10
-        inputs = [image_1, image_2, image_3, image_4, image_5, image_6, image_7, image_8, image_9, image_10]
-        for i in range(10):
-            if inputs[i] is not None: ParallelImageHub._storage[i] = inputs[i]
-            if ParallelImageHub._storage[i] is None: ParallelImageHub._storage[i] = ParallelImageHub._empty_image
-        return tuple(ParallelImageHub._storage)
 
 class _GrsaiNodeBase:
     FUNCTION = "execute"
@@ -1102,84 +765,14 @@ class GrsaiNanoBanana(_GrsaiNodeBase):
                     last_err = str(errs)
                 except Exception as e: last_err = str(e)
                 if attempt < retry_count: time.sleep(2)
-            if active_provider == "evolink" and grsai_model == "nano-banana-2-lite":
-                try:
-                    pils, _, _ = client.generate_image(prompt, "gemini-3-pro-image-preview", urls, resolution, aspect_ratio, float(timeout_seconds))
-                    if pils: return wrap(pil_to_tensor(pils), "[EVOLINK] Success (Auto-Downgrade)", 0)
-                except: pass
+            
+            # Removed fallback logic to gemini-3-pro-image-preview here as requested
+
             return wrap(fail_safe_image, f"All Failed: {last_err}", 1)
         except Exception as e:
             traceback.print_exc()
             return wrap(fail_safe_image, f"Crash: {str(e)}", 1)
         finally: self._cleanup_temp_files(temps)
-
-class GrsaiNanoBananaBatch(GrsaiNanoBanana):
-    CATEGORY = "Nkxx/图像"
-    @classmethod
-    def INPUT_TYPES(cls):
-        base = GrsaiNanoBanana.INPUT_TYPES()
-        req = {
-            "provider": (["grsai", "evolink"], {"default": "grsai"}),
-            "grsai_model": base["required"]["grsai_model"],
-            "file_path": ("STRING", {"default": "", "placeholder": "CSV/Excel Path"}),
-            "column_name": ("STRING", {"default": "prompt"}),
-            "prompt_prefix": ("STRING", {"multiline": True}),
-            "concurrency": base["required"]["concurrency"],
-            "max_count": ("INT", {"default": 50}),
-            "resolution": base["required"]["resolution"],
-            "aspect_ratio": base["required"]["aspect_ratio"],
-            "timeout_seconds": base["required"]["timeout_seconds"],
-            "retry_count": base["required"]["retry_count"],
-        }
-        return {"required": req, "optional": base["optional"]}
-    RETURN_TYPES = ("IMAGE", "STRING", "INT")
-    RETURN_NAMES = ("images_batch", "status", "failed")
-
-    def execute(self, provider, grsai_model, file_path, column_name, prompt_prefix, concurrency, max_count, resolution, aspect_ratio, timeout_seconds, retry_count=2, provider_override=None, 
-                image_1=None, image_2=None, image_3=None, image_4=None, image_5=None, video_1=None, character_id="",
-                **kwargs):
-        if pd is None: return {"ui": {"string": ["Pandas Missing"]}, "result": (self._create_error_image(), "Pandas Lib Missing", 1)}
-        active_provider = provider_override.strip().lower() if (provider_override and provider_override.strip()) else provider.strip().lower()
-        if active_provider == "local_sequence": return {"ui": {"string": ["No Local"]}, "result": (self._create_error_image(), "No Local", 1)}
-        
-        final_key = kwargs.get("api_key", "").strip()
-        if not final_key:
-             if active_provider == "grsai": final_key = get_grsai_api_key()
-             elif active_provider == "evolink": final_key = os.getenv("EVOLINK_KEY", "")
-        if not final_key: return {"ui": {"string": ["No Key"]}, "result": (self._create_error_image(), "No Key", 1)}
-        
-        try:
-            if file_path.endswith('.csv'): df = pd.read_csv(file_path)
-            else: df = pd.read_excel(file_path)
-            prompts = [f"{prompt_prefix}{p}" for p in df[column_name].dropna().astype(str).tolist()[:max_count]]
-        except: return {"ui": {"string": ["File/Column Error"]}, "result": (self._create_error_image(), "File/Column Error", 1)}
-        
-        proxies = format_proxies(kwargs.get("proxy_url",""))
-        client = GrsaiAPI(final_key, proxies) if active_provider == "grsai" else EvolinkAPI(final_key, proxies)
-        
-        imgs_in = [image_1, image_2, image_3, image_4, image_5]
-        urls, temps = [], []
-        if any(img is not None for img in imgs_in):
-             upload_res, temps = self._handle_image_uploads_generic(imgs_in, active_provider, client, proxies)
-             if isinstance(upload_res, dict) and "error" in upload_res:
-                 self._cleanup_temp_files(temps); return {"ui": {"string": ["Upload Fail"]}, "result": (self._create_error_image(), upload_res["error"], 1)}
-             urls = upload_res
-        
-        all_imgs, global_errs = [], []
-        for i, p in enumerate(prompts):
-            item_end = time.time() + timeout_seconds
-            success = False
-            for attempt in range(retry_count + 1):
-                if item_end - time.time() < 1: break
-                try:
-                    pils, _, _ = client.nano_banana_generate_image(p, grsai_model, urls, aspect_ratio, resolution, item_end - time.time()) if active_provider == "grsai" else client.generate_image(p, grsai_model, urls, resolution, aspect_ratio, item_end - time.time())
-                    if pils: all_imgs.extend(pils); success = True; break
-                except: pass
-                time.sleep(1)
-            if not success: global_errs.append(f"Item {i+1} Failed")
-        self._cleanup_temp_files(temps)
-        if not all_imgs: return {"ui": {"string": ["Batch Failed"]}, "result": (self._create_error_image(), f"Failures: {len(global_errs)}", 1)}
-        return {"ui": {"string": ["Batch Done"]}, "result": (pil_to_tensor(all_imgs), f"Done ({len(all_imgs)})", 0)}
 
 class NkxxSafeImageFromBatch:
     CATEGORY = "Nkxx/Image"
@@ -1196,13 +789,6 @@ class NkxxSafeImageFromBatch:
             return (res,) if res.shape[0] > 0 else (ph(),)
         except: return (ph(),)
 
-class GrsaiLLMWriter(_GrsaiNodeBase):
-    CATEGORY = "Nkxx/语言模型"
-    @classmethod
-    def INPUT_TYPES(cls): return {"required": {"model": (["gemini-2.5-flash"],), "main_prompt": ("STRING", {}), "system_prompt": ("STRING", {}), "output_filename": ("STRING", {}), "column_name": ("STRING", {})}}
-    RETURN_TYPES = ("STRING", "STRING"); RETURN_NAMES = ("file_path", "status"); 
-    def execute(self, **kwargs): return {"ui": {"string": ["Placeholder"]}, "result": ("", "Placeholder")}
-
 # ==============================================================================
 # 5. 节点注册映射
 # ==============================================================================
@@ -1211,42 +797,24 @@ NODE_CLASS_MAPPINGS = {
     "ApiqikGeminiNode": ApiqikGeminiNode,
     "AspectRatioSelect": AspectRatioSelect,
     "StoryboardCounter": StoryboardCounter,
-    "SaveTextFile": SaveTextFile,
-    "CustomPathSave": CustomPathSave,
-    "LoadNewestTextFile": LoadNewestTextFile,
     "RoleKeywordDetectorPro": RoleKeywordDetectorPro,
     "SceneKeywordDetector": SceneKeywordDetector, 
-    "SceneKeywordMapper": SceneKeywordMapper,
     "SmartImageConcat": SmartImageConcat,
-    "LoadImagesFromPathSequential": LoadImagesFromPathSequential,
-    "LoadImageByIndexSmart": LoadImageByIndexSmart,
     "BatchIntegerGenerator": BatchIntegerGenerator,
-    "ParallelImageHub": ParallelImageHub,
     "GrsaiProviderSelector": GrsaiProviderSelector,
     "GrsaiNanoBanana": GrsaiNanoBanana,
-    "GrsaiNanoBananaBatch": GrsaiNanoBananaBatch,
     "NkxxSafeImageFromBatch": NkxxSafeImageFromBatch,
-    "GrsaiLLMWriter": GrsaiLLMWriter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ApiqikGeminiNode": "Apiqik/Gemini Vision (Clean Output)",
     "AspectRatioSelect": "Aspect Ratio",
     "StoryboardCounter": "Storyboard Counter (分镜计数器)",
-    "SaveTextFile": "Save Text File (保存文本文件)",
-    "CustomPathSave": "Save Image Custom (自定义路径保存)",
-    "LoadNewestTextFile": "Load Newest Text (读取最新文本-5min时效)",
     "RoleKeywordDetectorPro": "Role Keyword Detector (角色关键词识别)",
     "SceneKeywordDetector": "Scene Keyword Detector (场景关键词识别)",
-    "SceneKeywordMapper": "Scene Keyword Mapper (场景关键词映射)",
     "SmartImageConcat": "Smart Image Concatenate (智能图像拼接)",
-    "LoadImagesFromPathSequential": "Sequence Image Loader (Batch & Natural)",
-    "LoadImageByIndexSmart": "Load Image Sequence (Index/Numeric)",
     "BatchIntegerGenerator": "Batch Integer Gen (按行整数生成器)",
-    "ParallelImageHub": "Parallel Image Hub (10-Way)",
     "GrsaiProviderSelector": "🍌 Grsai Provider Selector",
     "GrsaiNanoBanana": "🍌 Grsai Nano Banana (Pro/Fast + Local)",
-    "GrsaiNanoBananaBatch": "🍌 Grsai Nano Banana Batch",
     "NkxxSafeImageFromBatch": "🔧 Safe Image From Batch (Empty Allowed)",
-    "GrsaiLLMWriter": "✍️ Grsai LLM/VLM Writer",
 }
